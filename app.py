@@ -1,20 +1,24 @@
 import streamlit as st
 import pandas as pd
 import time
-import pyautogui
-import keyboard
 import os
-import webbrowser
+import random
+from selenium import webdriver
+from selenium.webdriver.chrome.service import Service
+from selenium.webdriver.chrome.options import Options
+from selenium.webdriver.common.by import By
+from selenium.webdriver.common.keys import Keys
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
+from webdriver_manager.chrome import ChromeDriverManager
+import win32clipboard
 from PIL import Image
 from io import BytesIO
-import win32clipboard
 
-# Konfigurasi Halaman
-st.set_page_config(page_title="WA Bulk Sender ITICM", layout="wide")
+st.set_page_config(page_title="WA Bulk Anti-Banned - ITICM", layout="wide")
+st.title("🚀 WA Interactive Blasting - By Diky Wahyu")
 
-st.title("🚀 WA Bulk Sender - By Diky Wahyu")
-
-# Fungsi Kirim Gambar ke Clipboard
+# --- FUNGSI CLIPBOARD ---
 def send_image_to_clipboard(path):
     img = Image.open(path)
     output = BytesIO()
@@ -26,94 +30,133 @@ def send_image_to_clipboard(path):
     win32clipboard.SetClipboardData(win32clipboard.CF_DIB, data)
     win32clipboard.CloseClipboard()
 
-# Fungsi Kirim Teks ke Clipboard
 def send_text_to_clipboard(text):
     win32clipboard.OpenClipboard()
     win32clipboard.EmptyClipboard()
     win32clipboard.SetClipboardText(text, win32clipboard.CF_UNICODETEXT)
     win32clipboard.CloseClipboard()
 
-def kirim_wa_flow_baru(no_wa, jalur_gambar, pesan):
-    # Membuka WhatsApp Web
-    url = f"https://web.whatsapp.com/send?phone={no_wa}"
-    webbrowser.open(url)
-    time.sleep(15) # Beri waktu loading (sesuaikan jika internet lambat)
+# --- SETUP BROWSER PROFIL TERPISAH ---
+def init_driver(profile_folder):
+    chrome_options = Options()
+    path = os.path.join(os.getcwd(), profile_folder)
+    chrome_options.add_argument(f"--user-data-dir={path}")
+    chrome_options.add_argument("--profile-directory=Default")
+    chrome_options.add_argument("--start-maximized")
+    chrome_options.add_argument("--disable-gpu")
+    chrome_options.add_argument("--no-sandbox")
+    driver = webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=chrome_options)
+    return driver
 
+# --- FUNGSI KIRIM PESAN TANPA TAB BARU ---
+def kirim_interaksi(driver, no_tujuan, pesan):
+    wait = WebDriverWait(driver, 30)
     try:
-        # 0. klik area
-        width, height = pyautogui.size()
-        pyautogui.click(width * 0.5, height * 0.9) 
-        time.sleep(1)
-
-        # 1. Copy & Paste Gambar
-        send_image_to_clipboard(jalur_gambar)
-        time.sleep(1)
-        pyautogui.hotkey('ctrl', 'v')
-        time.sleep(3) # Tunggu preview gambar muncul
-
-        # 2. Copy & Paste Text (Caption)
+        driver.get(f"https://web.whatsapp.com/send?phone={no_tujuan}")
+        chat_box = wait.until(EC.element_to_be_clickable((By.XPATH, '//div[@role="textbox"][@aria-placeholder="Ketik pesan"]')))
         send_text_to_clipboard(pesan)
-        time.sleep(1)
-        pyautogui.hotkey('ctrl', 'v')
-        time.sleep(1)
-
-        # 3. Enter untuk kirim
-        keyboard.press('enter')
-        time.sleep(3) # Tunggu proses kirim selesai
-        
-        # 4. Tutup Tab
-        pyautogui.hotkey('ctrl', 'w')
+        chat_box.send_keys(Keys.CONTROL + 'v')
+        chat_box.send_keys(Keys.ENTER)
+        time.sleep(2)
         return True
-    except Exception as e:
-        st.error(f"Gagal pada nomor {no_wa}: {e}")
+    except:
         return False
 
-# --- UI SIDEBAR ---
+# --- SIDEBAR KONFIGURASI ---
 with st.sidebar:
-    st.header("Konfigurasi")
-    img_file = st.file_uploader("Upload Gambar", type=['jpg', 'jpeg', 'png'])
-    caption_1 = st.text_area("Pesan 1 (Ganjil)", "Halo {name}...\nKUOTA TERBATAS!!\nTERBATAS!!", height=150)
-    caption_2 = st.text_area("Pesan 2 (Genap)", "Hai Milennials {name}...\nBeasiswa S1 ITICM", height=150)
-    st.warning("⚠️ Jangan pindah jendela saat aplikasi bekerja!")
+    st.header("📲 Konfigurasi Dual HP")
+    no_hp_1 = st.text_input("Nomor HP 1 (Blasting)", placeholder="628xxx")
+    no_hp_2 = st.text_input("Nomor HP 2 (Chatter)", placeholder="628xxx")
+    txt_file = st.file_uploader("Upload Script Chat (.txt)", type=['txt'])
+    
+    st.divider()
+    st.header("📁 File & Pesan")
+    img_file = st.file_uploader("Upload Gambar Utama", type=['jpg', 'jpeg', 'png'])
+    
+    cap_ganjil = st.text_area("Pesan Ganjil", "Halo {name}...")
+    cap_genap = st.text_area("Pesan Genap", "Hai {name}...")
 
 # --- LOGIKA UTAMA ---
-uploaded_file = st.file_uploader("Pilih File Excel (.xlsx)", type=['xlsx'])
+uploaded_excel = st.file_uploader("Pilih Data Excel", type=['xlsx'])
 
-if uploaded_file and img_file:
-    temp_path = "temp_image.jpg"
-    with open(temp_path, "wb") as f:
+if uploaded_excel and img_file and txt_file and no_hp_1 and no_hp_2:
+    # Simpan file sementara
+    temp_img = "temp_img.jpg"
+    with open(temp_img, "wb") as f:
         f.write(img_file.getbuffer())
-
-    df = pd.read_excel(uploaded_file)
-    df['Status'] = "Pending"
     
-    table_placeholder = st.empty()
-    table_placeholder.dataframe(df)
+    # Baca Script Chat TXT
+    chat_lines = txt_file.getvalue().decode("utf-8").splitlines()
+    chat_lines = [line.strip() for line in chat_lines if line.strip()] # Bersihkan baris kosong
+    
+    df = pd.read_excel(uploaded_excel)
+    df['Status'] = "Pending"
+    tabel = st.empty()
+    tabel.dataframe(df)
 
-    if st.button("🚀 Mulai Kirim Pesan"):
-        progress_bar = st.progress(0)
+    if st.button("🚀 Jalankan Blasting + Infinite Chat"):
+        d1 = init_driver("Profile_HP_1")
+        d2 = init_driver("Profile_HP_2")
         
+        st.warning("Scan QR di kedua browser! Tunggu sampai WhatsApp siap.")
+        time.sleep(15)
+
+        current_txt_index = 0
+        progress_bar = st.progress(0)
+
         for index, row in df.iterrows():
             nama = row['Nama']
-            no_wa = str(row['WA']).replace(".0", "").strip()
-            if not no_wa.startswith('+'):
-                no_wa = "+62" + no_wa[1:] if no_wa.startswith('0') else "+" + no_wa
+            target = str(row['WA']).replace(".0", "").strip()
+            if target.startswith('0'): target = "62" + target[1:]
 
-            # Logika Ganjil/Genap
-            pesan_personal = caption_1 if (index + 1) % 2 != 0 else caption_2
-            pesan_personal = pesan_personal.replace("{name}", nama)
+            # 1. HP 1 BLASTING KE TARGET (TAB BARU)
+            d1.execute_script("window.open('');")
+            d1.switch_to.window(d1.window_handles[-1])
+            try:
+                d1.get(f"https://web.whatsapp.com/send?phone={target}")
+                wait_blast = WebDriverWait(d1, 60)
+                box = wait_blast.until(EC.element_to_be_clickable((By.XPATH, '//div[@role="textbox"][@aria-placeholder="Ketik pesan"]')))
+                
+                # Paste Gambar
+                send_image_to_clipboard(temp_img)
+                box.send_keys(Keys.CONTROL + 'v')
+                wait_blast.until(EC.element_to_be_clickable((By.XPATH, '//div[@role="button"][@aria-label="Kirim"]'))).click()
+                time.sleep(4)
+                
+                # Paste Teks
+                p = cap_ganjil if index % 2 == 0 else cap_genap
+                send_text_to_clipboard(p.replace("{name}", nama))
+                box_baru = wait_blast.until(EC.presence_of_element_located((By.XPATH, '//div[@role="textbox"][@aria-placeholder="Ketik pesan"]')))
+                box_baru.send_keys(Keys.CONTROL + 'v')
+                box_baru.send_keys(Keys.ENTER)
+                time.sleep(3)
+            finally:
+                d1.close()
+                d1.switch_to.window(d1.window_handles[0])
 
-            df.at[index, 'Status'] = "⏳ Proses..."
-            table_placeholder.dataframe(df)
-
-            if kirim_wa_flow_baru(no_wa, temp_path, pesan_personal):
-                df.at[index, 'Status'] = "✅ Terhasil"
+            # 2. SIMULASI CHAT ANTAR HP (MENGGUNAKAN TXT)
+            # Ambil baris dari TXT
+            pesan_txt = chat_lines[current_txt_index]
+            
+            # Ganjil: HP 2 kirim ke HP 1 | Genap: HP 1 balas ke HP 2
+            if index % 2 == 0:
+                kirim_interaksi(d2, no_hp_1, pesan_txt)
             else:
-                df.at[index, 'Status'] = "❌ Gagal"
+                kirim_interaksi(d1, no_hp_2, pesan_txt)
 
-            table_placeholder.dataframe(df)
+            # Update index TXT (Reset ke 0 jika habis)
+            current_txt_index += 1
+            if current_txt_index >= len(chat_lines):
+                current_txt_index = 0 # Kembali ke baris pertama TXT
+
+            # Update Status
+            df.at[index, 'Status'] = f"✅ Terkirim (Chat line {current_txt_index})"
+            tabel.dataframe(df)
             progress_bar.progress((index + 1) / len(df))
             
-        st.success("Selesai mengolah semua data!")
-else:
-    st.info("Upload file Excel dan Gambar di sidebar untuk memulai.")
+            # Jeda acak biar natural
+            time.sleep(random.randint(5, 12))
+
+        st.success("Proses Blasting & Infinite Chat Selesai!")
+        d1.quit()
+        d2.quit()
